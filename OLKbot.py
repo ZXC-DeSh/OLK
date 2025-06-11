@@ -5,12 +5,12 @@ import re
 TOKEN = '8080966559:AAGvsCE5cL1FfREmrJqTTNO1WfZmiR5-Bug'
 bot = telebot.TeleBot(TOKEN)
 
-TARGET_CHAT_ID = -1002860241295  # Чат в который отправляются формы
+TARGET_CHAT_ID = -1002860241295  # чат в который отправляются формы
 
 user_states = {}
 
 # --- Модуль клавиатур ---
-def create_inline_keyboard():
+def create_main_keyboard():
     keyboard = types.InlineKeyboardMarkup()
     btn_suggestion = types.InlineKeyboardButton('💡 Предложение', callback_data='suggestion')
     btn_complaint = types.InlineKeyboardButton('😠 Жалоба', callback_data='complaint')
@@ -18,7 +18,20 @@ def create_inline_keyboard():
     keyboard.add(btn_suggestion, btn_complaint, btn_gratitude)
     return keyboard
 
-# --- Модуль управления состоянием ---
+def create_form_keyboard():
+    keyboard = types.InlineKeyboardMarkup()
+    btn_cancel = types.InlineKeyboardButton('❌ Отмена', callback_data='cancel')
+    keyboard.add(btn_cancel)
+    return keyboard
+
+def create_gratitude_keyboard():
+    keyboard = types.InlineKeyboardMarkup()
+    btn_anonymous = types.InlineKeyboardButton('🤫 Анонимно', callback_data='gratitude_anonymous')
+    btn_with_name = types.InlineKeyboardButton('📝 С ФИО', callback_data='gratitude_with_name')
+    keyboard.add(btn_anonymous, btn_with_name)
+    return keyboard
+
+# --- Модуль управления состоянием пользователя ---
 def clear_state(user_id):
     user_states[user_id] = {'state': None, 'data': {}}
 
@@ -29,7 +42,7 @@ def get_user_state(user_id):
 
 # --- Модуль валидации ---
 def is_valid_email(email):
-    email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"  # регулярное выражение
     return re.match(email_pattern, email) is not None
 
 # --- Обработчики ---
@@ -38,39 +51,84 @@ def start(msg):
     user_id = msg.from_user.id
     clear_state(user_id)
     welcome_message = "Здравствуйте! Что вы хотите сделать?"
-    keyboard = create_inline_keyboard()
+    keyboard = create_main_keyboard()
     bot.send_message(user_id, welcome_message, reply_markup=keyboard)
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback_query(call):
     user_id = call.from_user.id
+    message_id = call.message.message_id
+
     if call.data == 'suggestion':
         bot.answer_callback_query(call.id)
-        ask_fio(call.message)
+        ask_fio(call.message, message_id)
     elif call.data == 'complaint':
         bot.answer_callback_query(call.id)
-        ask_complaint(call.message)
+        ask_complaint(call.message, message_id)
     elif call.data == 'gratitude':
         bot.answer_callback_query(call.id)
-        ask_gratitude(call.message)
+        ask_gratitude_option(call.message, message_id)
+    elif call.data == 'gratitude_anonymous':
+        bot.answer_callback_query(call.id)
+        ask_gratitude_anonymous(call.message, message_id)
+    elif call.data == 'gratitude_with_name':
+        bot.answer_callback_query(call.id)
+        ask_fio(call.message, message_id)
+        user_id = call.from_user.id
+        user_states[user_id]['state'] = 'gratitude_with_name'
+        user_states[user_id]['data'] = {}
+    elif call.data == 'cancel':
+        bot.answer_callback_query(call.id)
+        clear_state(user_id)
+        bot.edit_message_text(
+            chat_id=user_id,
+            message_id=message_id,
+            text="Вы вернулись в главное меню.",
+            reply_markup=create_main_keyboard()
+        )
     else:
         bot.send_message(user_id, "Неизвестная команда.")
 
 # --- Обработчики состояний ---
-def ask_fio(message):
+def ask_fio(message, message_id):
     user_id = message.chat.id
     user_states[user_id] = {'state': 'suggestion', 'data': {}}
-    bot.send_message(user_id, "Пожалуйста, введите ваше ФИО:")
+    bot.edit_message_text(
+        chat_id=user_id,
+        message_id=message_id,
+        text="Пожалуйста, введите ваше ФИО:",
+        reply_markup=create_form_keyboard()
+    )
 
-def ask_complaint(message):
+def ask_complaint(message, message_id):
     user_id = message.chat.id
     user_states[user_id] = {'state': 'complaint', 'data': {}}
-    bot.send_message(user_id, "Пожалуйста, опишите вашу проблему:")
+    bot.edit_message_text(
+        chat_id=user_id,
+        message_id=message_id,
+        text="Пожалуйста, опишите вашу проблему:",
+        reply_markup=create_form_keyboard()
+    )
 
-def ask_gratitude(message):
+def ask_gratitude_option(message, message_id):
     user_id = message.chat.id
-    user_states[user_id] = {'state': 'gratitude', 'data': {}}
-    bot.send_message(user_id, "Пожалуйста, опишите вашу благодарность:")
+    user_states[user_id] = {'state': 'gratitude_option', 'data': {}}
+    bot.edit_message_text(
+        chat_id=user_id,
+        message_id=message_id,
+        text="Как вы хотите отправить благодарность?",
+        reply_markup=create_gratitude_keyboard()
+    )
+
+def ask_gratitude_anonymous(message, message_id):
+    user_id = message.chat.id
+    user_states[user_id] = {'state': 'gratitude_anonymous', 'data': {}}
+    bot.edit_message_text(
+        chat_id=user_id,
+        message_id=message_id,
+        text="Пожалуйста, опишите вашу благодарность:",
+        reply_markup=create_form_keyboard()
+    )
 
 @bot.message_handler(func=lambda msg: True, content_types=['text'])
 def process_message(msg):
@@ -103,31 +161,49 @@ def process_message(msg):
                     f"*Описание:* {user_state['data']['description']}"
                 )
                 bot.send_message(TARGET_CHAT_ID, report, parse_mode='Markdown')
-                bot.send_message(user_id, "Спасибо за ваше предложение!", reply_markup=create_inline_keyboard())
+                bot.send_message(user_id, "Спасибо за ваше предложение!", reply_markup=create_main_keyboard())
                 clear_state(user_id)
 
         elif user_state['state'] == 'complaint':
             user_state['data']['description'] = msg.text
             report = f"*Новая жалоба:*\n*Описание:* {user_state['data']['description']}"
             bot.send_message(TARGET_CHAT_ID, report, parse_mode='Markdown')
-            bot.send_message(user_id, "Спасибо за вашу жалобу. Мы рассмотрим её.", reply_markup=create_inline_keyboard())
+            bot.send_message(user_id, "Спасибо за вашу жалобу. Мы рассмотрим её.", reply_markup=create_main_keyboard())
             clear_state(user_id)
 
-        elif user_state['state'] == 'gratitude':
+        elif user_state['state'] == 'gratitude_anonymous':
             user_state['data']['description'] = msg.text
-            report = f"*Новая благодарность:*\n*Описание:* {user_state['data']['description']}"
+            report = f"*Новая благодарность (анонимно):*\n*Описание:* {user_state['data']['description']}"
             bot.send_message(TARGET_CHAT_ID, report, parse_mode='Markdown')
-            bot.send_message(user_id, "Спасибо за вашу благодарность!", reply_markup=create_inline_keyboard())
+            bot.send_message(user_id, "Спасибо за вашу благодарность!", reply_markup=create_main_keyboard())
             clear_state(user_id)
+
+        elif user_state['state'] == 'gratitude_with_name':
+            if 'fio' not in user_state['data']:
+                user_state['data']['fio'] = msg.text
+                bot.send_message(user_id, "Пожалуйста, опишите вашу благодарность:")
+            else:
+                user_state['data']['description'] = msg.text
+                report = (
+                    "*Новая благодарность:*\n"
+                    f"*ФИО:* {user_state['data']['fio']}\n"
+                    f"*Описание:* {user_state['data']['description']}"
+                )
+                bot.send_message(TARGET_CHAT_ID, report, parse_mode='Markdown')
+                bot.send_message(user_id, "Спасибо за вашу благодарность!", reply_markup=create_main_keyboard())
+                clear_state(user_id)
+
         else:
-            bot.send_message(user_id, "Пожалуйста, используйте кнопки в меню.", reply_markup=create_inline_keyboard())
+            welcome_message = "Здравствуйте! Пожалуйста, используйте кнопки в меню."
+            keyboard = create_main_keyboard()
+            bot.send_message(user_id, welcome_message, reply_markup=keyboard)
 
     except Exception as e:
         print(f"Ошибка при обработке сообщения: {e}")
         bot.send_message(
             user_id,
             "Произошла непредвиденная ошибка. Пожалуйста, попробуйте позже или начните заново с команды /start.",
-            reply_markup=create_inline_keyboard(),
+            reply_markup=create_main_keyboard(),
         )
         clear_state(user_id)
 
