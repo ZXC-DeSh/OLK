@@ -6,8 +6,8 @@ TOKEN = '8080966559:AAGvsCE5cL1FfREmrJqTTNO1WfZmiR5-Bug'
 bot = telebot.TeleBot(TOKEN)
 
 TARGET_CHAT_ID = -1002860241295  # чат в который отправляются формы
-FEEDBACK_THREAD_ID = 20  # message_thread_id для темы обратной связи
-ISSUES_THREAD_ID = 21    # message_thread_id для темы неисправностей
+FEEDBACK_THREAD_ID = 20
+ISSUES_THREAD_ID = 21
 
 user_states = {}
 
@@ -33,6 +33,13 @@ def create_gratitude_keyboard():
     btn_with_name = types.InlineKeyboardButton('📝 С ФИО', callback_data='gratitude_with_name')
     btn_cancel = types.InlineKeyboardButton('❌ Отмена', callback_data='cancel')
     keyboard.add(btn_anonymous, btn_with_name, btn_cancel)
+    return keyboard
+
+def create_urgency_keyboard():
+    keyboard = types.InlineKeyboardMarkup()
+    btn_urgent = types.InlineKeyboardButton('🔴 Срочно', callback_data='urgent')
+    btn_not_urgent = types.InlineKeyboardButton('🟢 Не срочно', callback_data='not_urgent')
+    keyboard.add(btn_urgent, btn_not_urgent)
     return keyboard
 
 # --- Модуль управления состоянием пользователя ---
@@ -85,7 +92,13 @@ def handle_callback_query(call):
         user_states[user_id]['state'] = 'gratitude_with_name'
     elif call.data == 'malfunction':
         bot.answer_callback_query(call.id)
-        ask_malfunction_info(call.message, message_id, 'department')
+        user_states[user_id]['state'] = 'malfunction_urgency'
+        bot.edit_message_text(
+            chat_id=user_id,
+            message_id=message_id,
+            text="Пожалуйста, выберите срочность поломки:",
+            reply_markup=create_urgency_keyboard()
+        )
     elif call.data == 'cancel':
         bot.answer_callback_query(call.id)
         clear_state(user_id)
@@ -95,6 +108,12 @@ def handle_callback_query(call):
             text="Вы вернулись в главное меню.",
             reply_markup=create_main_keyboard()
         )
+    elif call.data == 'urgent':
+        user_states[user_id]['data']['urgency'] = '🔴 Срочно'
+        ask_malfunction_info(user_id)
+    elif call.data == 'not_urgent':
+        user_states[user_id]['data']['urgency'] = '🟢 Не срочно'
+        ask_malfunction_info(user_id)
     else:
         bot.send_message(user_id, "Неизвестная команда.")
 
@@ -139,20 +158,19 @@ def ask_gratitude_anonymous(message, message_id):
         reply_markup=create_form_keyboard()
     )
 
-def ask_malfunction_info(message, message_id, step):
-    user_id = message.chat.id
+def ask_malfunction_info(user_id, step=None, message_text=None):
     user_state = get_user_state(user_id)
 
-    if step == 'department':
+    if step is None:
         user_state['state'] = 'malfunction_department'
-        bot.edit_message_text(
-            chat_id=user_id, message_id=message_id,
-            text="Пожалуйста, укажите отделение, в котором произошла неисправность:",
+        bot.send_message(
+            user_id,
+            "Пожалуйста, укажите отделение, в котором произошла неисправность:",
             reply_markup=create_form_keyboard()
         )
     elif step == 'floor':
         user_state['state'] = 'malfunction_floor'
-        user_state['data']['department'] = message.text
+        user_state['data']['department'] = message_text
         bot.send_message(
             user_id,
             "Укажите, на каком этаже произошла неисправность:",
@@ -160,10 +178,10 @@ def ask_malfunction_info(message, message_id, step):
         )
     elif step == 'description':
         user_state['state'] = 'malfunction_description'
-        user_state['data']['floor'] = message.text
+        user_state['data']['floor'] = message_text
         bot.send_message(
             user_id,
-            "Пожалуйста, подробно опишите, что случилось (проблема/поломка):",
+            "Пожалуйста, опишите поломку:",
             reply_markup=create_form_keyboard()
         )
 
@@ -232,19 +250,20 @@ def process_message(msg):
 
         elif user_state['state'] == 'malfunction_department':
             user_state['data']['department'] = msg.text
-            ask_malfunction_info(msg, msg.message_id, 'floor')
+            ask_malfunction_info(user_id, step='floor', message_text=msg.text)
 
         elif user_state['state'] == 'malfunction_floor':
             user_state['data']['floor'] = msg.text
-            ask_malfunction_info(msg, msg.message_id, 'description')
+            ask_malfunction_info(user_id, step='description', message_text=msg.text)
 
         elif user_state['state'] == 'malfunction_description':
             user_state['data']['description'] = msg.text
             report = (
                 "*Новая заявка на неисправность/поломку:*\n"
+                f"*Срочность:* {user_state['data'].get('urgency', 'Не указано')}\n"
                 f"*Отделение:* {user_state['data'].get('department', 'Не указано')}\n"
                 f"*Этаж:* {user_state['data'].get('floor', 'Не указано')}\n"
-                f"*Описание проблемы:* {user_state['data']['description']}"
+                f"*Описание проблемы:* {user_state['data']['description']}\n"
             )
             bot.send_message(TARGET_CHAT_ID, report, parse_mode='Markdown', message_thread_id=ISSUES_THREAD_ID)
             bot.send_message(user_id, "Спасибо! Ваша заявка принята.", reply_markup=create_main_keyboard())
